@@ -19,8 +19,8 @@
 
 ## 下载
 
-- GitHub Releases：`RestreamChatPlugin.dll`（单文件，已内嵌 Newtonsoft.Json）
-- 弹幕姬官网插件页
+- [GitHub Releases](https://github.com/wan0ge/RestreamChatPlugin/releases)：`RestreamChatPlugin.dll`（单文件，已内嵌 Newtonsoft.Json）
+- [弹幕姬官网插件页](https://www.danmuji.org/plugins/)
 
 ## 安装
 
