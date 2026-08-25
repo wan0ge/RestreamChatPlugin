@@ -11,6 +11,8 @@ using System.Windows.Threading;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
 using System.Threading.Tasks;
 using System.Security.Cryptography;
 
@@ -83,6 +85,45 @@ namespace RestreamChatPlugin
                 PositionToScreen();
                 if (Mode != "sidebar") BuildTracks();
             };
+
+            // 让本窗口始终位于所有窗口之上，包括其它同样置顶（Topmost）的应用：
+            // WPF 的 Topmost=true 只能压过非置顶窗口，遇到同样置顶的窗口会按 z 序被覆盖。
+            // 接管 WM_WINDOWPOSCHANGING，把插入点钉死为 HWND_TOPMOST 并清除 SWP_NOZORDER，
+            // 使任何把本窗口往下排的尝试都被即时拉回顶层（弹幕姬自带浮层即采用同一思路）。
+            SourceInitialized += (s, e) =>
+            {
+                var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+                source.AddHook(WndProc);
+            };
+        }
+
+        private const int WM_WINDOWPOSCHANGING = 0x0046;
+        private const uint SWP_NOZORDER = 0x0004;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct WINDOWPOS
+        {
+            public IntPtr hwnd;
+            public IntPtr hwndInsertAfter;
+            public int x;
+            public int y;
+            public int cx;
+            public int cy;
+            public uint flags;
+        }
+
+        // 窗口位置即将变更时，强制本窗口维持在置顶 z 序：把插入点设为 HWND_TOPMOST（-1）
+        // 并清除 SWP_NOZORDER，使其余窗口的置顶操作无法把本窗口排到下方。
+        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (msg == WM_WINDOWPOSCHANGING)
+            {
+                var wp = (WINDOWPOS)Marshal.PtrToStructure(lParam, typeof(WINDOWPOS));
+                wp.hwndInsertAfter = new IntPtr(-1);
+                wp.flags = wp.flags & ~SWP_NOZORDER;
+                Marshal.StructureToPtr(wp, lParam, true);
+            }
+            return IntPtr.Zero;
         }
 
         private void PositionToScreen()
@@ -536,14 +577,76 @@ namespace RestreamChatPlugin
             }));
         }
 
-        // 设置图片源（按内容解码，扩展名不影响识别）；源无效时抛异常，由上层决定回退。
-        private static void SetImageSource(Image img, string url)
+        // 设置图片源：按内容解码（扩展名不影响识别）。动画 GIF 用 GifBitmapDecoder 逐帧播放，
+        // 其余格式走静态 BitmapImage。WPF 的 Image 默认只显示 GIF 首帧、不会动，故需手动驱动。
+        private static void SetImageSource(Image img, string path)
         {
+            if (IsGifFile(path) && StartGifAnimation(img, path)) return;
             var bi = new BitmapImage();
             bi.BeginInit();
-            bi.UriSource = new Uri(url);
+            bi.UriSource = new Uri(path);
             bi.EndInit();
             img.Source = bi;
+        }
+
+        // 是否 GIF 文件：读前 3 字节「GIF」魔数判定（与扩展名无关，BTTV 等无扩展名 URL 也能识别）。
+        // 入参为 file:// 绝对 URI 字符串，转成本地路径后再读。
+        private static bool IsGifFile(string uriString)
+        {
+            try
+            {
+                var local = new Uri(uriString).LocalPath;
+                using (var fs = new FileStream(local, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    var head = new byte[3];
+                    return fs.Read(head, 0, 3) == 3 && head[0] == 'G' && head[1] == 'I' && head[2] == 'F';
+                }
+            }
+            catch { return false; }
+        }
+
+        // 播放动画 GIF：用 GifBitmapDecoder 解码全部帧，按各帧「图像控制扩展」里的延时（Delay，
+        // 单位 1/100 秒）循环切换。单帧 GIF 直接作为静态图返回。成功返回 true，解码失败返回 false
+        // （交由上层回退静态 BitmapImage 或文字）。图片从可视化树移除时停止定时器，避免空转与泄漏。
+        private static bool StartGifAnimation(Image img, string path)
+        {
+            GifBitmapDecoder decoder;
+            try
+            {
+                decoder = new GifBitmapDecoder(new Uri(path), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+            }
+            catch { return false; }
+            if (decoder.Frames.Count <= 1)
+            {
+                img.Source = decoder.Frames[0];
+                return true;
+            }
+            var delays = new int[decoder.Frames.Count];
+            for (var i = 0; i < decoder.Frames.Count; i++)
+            {
+                var delay = 100;
+                try
+                {
+                    if (decoder.Frames[i].Metadata is BitmapMetadata meta && meta.ContainsQuery("/grctlext/Delay"))
+                        delay = Math.Max(10, Convert.ToInt32(meta.GetQuery("/grctlext/Delay")) * 10);
+                }
+                catch { }
+                delays[i] = delay;
+            }
+            var idx = 0;
+            img.Source = decoder.Frames[0];
+            // StartGifAnimation 在 img.Dispatcher.Invoke 内调用，当前线程即 UI 调度器，
+            // DispatcherTimer 默认在其上触发；图片移出可视化树时停止定时器，避免空转与泄漏。
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(delays[0]) };
+            timer.Tick += (s, e) =>
+            {
+                idx = (idx + 1) % decoder.Frames.Count;
+                img.Source = decoder.Frames[idx];
+                timer.Interval = TimeSpan.FromMilliseconds(delays[idx]);
+            };
+            img.Unloaded += (s, e) => timer.Stop();
+            timer.Start();
+            return true;
         }
 
         // 表情包图片：缓存命中或下载完成后调用；加载失败（文件损坏/格式不支持）或无可用

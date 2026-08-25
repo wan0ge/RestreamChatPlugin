@@ -36,33 +36,29 @@ namespace RestreamChatPlugin
                 var g = await http.GetStringAsync("https://api.betterttv.net/3/cached/emotes/global");
                 foreach (var e in JArray.Parse(g))
                 {
-                    var raw = (string)e["images"]?["url"];
-                    if (raw != null) dict[(string)e["code"]] = NormalizeBttv(raw);
+                    var code = (string)e["code"];
+                    var eid = (string)e["id"];
+                    if (code != null && eid != null) dict[code] = BttvEmoteUrl(eid);
                 }
             }
             catch { }
             try
             {
                 var c = await http.GetStringAsync("https://api.betterttv.net/3/cached/users/twitch/" + id);
-                var o = JObject.Parse(c);
-                foreach (var e in o["channelEmotes"] ?? new JArray())
+                foreach (var e in JArray.Parse(c))
                 {
-                    var raw = (string)e["images"]?["url"];
-                    if (raw != null) dict[(string)e["code"]] = NormalizeBttv(raw);
-                }
-                foreach (var e in o["sharedEmotes"] ?? new JArray())
-                {
-                    var raw = (string)e["images"]?["url"];
-                    if (raw != null) dict[(string)e["code"]] = NormalizeBttv(raw);
+                    var code = (string)e["code"];
+                    var eid = (string)e["id"];
+                    if (code != null && eid != null) dict[code] = BttvEmoteUrl(eid);
                 }
             }
             catch { }
         }
 
-        private static string NormalizeBttv(string raw)
+        // BTTV 表情图片地址：v3 API 以表情 id 拼 CDN 路径（/1x 对动画表情自动返回 GIF）。
+        internal static string BttvEmoteUrl(string emoteId)
         {
-            return raw.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                ? raw : "https://cdn.betterttv.net" + raw;
+            return "https://cdn.betterttv.net/emote/" + emoteId + "/1x";
         }
 
         private static async Task AddFfz(HttpClient http, string id, Dictionary<string, string> dict)
@@ -104,7 +100,7 @@ namespace RestreamChatPlugin
         {
             try
             {
-                var g = await http.GetStringAsync("https://7tv.io/v3/emote-set/global");
+                var g = await http.GetStringAsync("https://7tv.io/v3/emote-sets/global");
                 Merge7Tv(JObject.Parse(g), dict);
             }
             catch { }
@@ -128,11 +124,29 @@ namespace RestreamChatPlugin
                 var files = host?["files"] as JArray;
                 var baseUrl = (string)host?["url"];
                 if (name == null || files == null || files.Count == 0 || baseUrl == null) continue;
-                var file = files[0];
-                var fileName = (string)file["name"];
-                if (fileName == null) continue;
-                dict[name] = baseUrl.TrimEnd('/') + "/" + fileName;
+                // 优先选 1x 的 GIF：WPF 原生可渲染且能动画；WebP/AVIF 无原生解码器，故不选用。
+                // 7tv 的 host.url 为协议相对地址（//cdn.7tv.app/...），补齐 https: 才能被 Uri 解析。
+                string fileName = null;
+                foreach (var f in files)
+                {
+                    var fn = (string)f["name"];
+                    if (fn != null && fn.EndsWith("1x.gif", StringComparison.OrdinalIgnoreCase)) { fileName = fn; break; }
+                }
+                if (fileName == null)
+                    foreach (var f in files)
+                    {
+                        var fn = (string)f["name"];
+                        if (fn != null && fn.EndsWith(".gif", StringComparison.OrdinalIgnoreCase)) { fileName = fn; break; }
+                    }
+                if (fileName == null) continue; // WebP/AVIF：无原生解码，留空使该表情回退为文字
+                dict[name] = SevenTvEmoteUrl(baseUrl, fileName);
             }
+        }
+
+        // 7TV 表情图片地址：host.url 为协议相对地址（//cdn.7tv.app/...），补齐 https: 后拼文件名。
+        internal static string SevenTvEmoteUrl(string hostUrl, string fileName)
+        {
+            return "https:" + hostUrl.TrimEnd('/') + "/" + fileName;
         }
     }
 }

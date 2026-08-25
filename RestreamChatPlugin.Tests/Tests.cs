@@ -575,5 +575,39 @@ namespace RestreamChatPlugin.Tests
                 else if (File.Exists(path)) File.Delete(path);
             }
         }
+
+        // ===== EmoteProvider：第三方表情地址拼装（实现后：BTTV 走 id、7TV 走 GIF 文件） =====
+
+        [TestMethod]
+        public void BttvEmoteUrl_FormatById()
+        {
+            // 常规：v3 API 以表情 id 拼 CDN 路径，/1x 对动画表情自动返回 GIF。
+            Assert.AreEqual("https://cdn.betterttv.net/emote/566ca38765dbbdab32ec0560/1x",
+                EmoteProvider.BttvEmoteUrl("566ca38765dbbdab32ec0560"));
+        }
+
+        [TestMethod]
+        public void BttvEmoteUrl_Edge_KeepsIdVerbatim()
+        {
+            // 边缘：id 含非数字字符时原样拼入，不做转义或截断。
+            Assert.AreEqual("https://cdn.betterttv.net/emote/AbC-123/1x",
+                EmoteProvider.BttvEmoteUrl("AbC-123"));
+        }
+
+        [TestMethod]
+        public void SevenTvEmoteUrl_ProtocolRelativeHost_PrefixedHttps()
+        {
+            // 常规：7TV host.url 为协议相对地址（//cdn.7tv.app/...），需补齐 https:。
+            Assert.AreEqual("https://cdn.7tv.app/emote/01FCY771D800007PQ2DF3GDTN6/1x.gif",
+                EmoteProvider.SevenTvEmoteUrl("//cdn.7tv.app/emote/01FCY771D800007PQ2DF3GDTN6", "1x.gif"));
+        }
+
+        [TestMethod]
+        public void SevenTvEmoteUrl_Edge_TrimsTrailingSlash()
+        {
+            // 边缘：host 结尾多余斜杠不重复，文件名直接拼接。
+            Assert.AreEqual("https://cdn.7tv.app/emote/x/2x.gif",
+                EmoteProvider.SevenTvEmoteUrl("//cdn.7tv.app/emote/x/", "2x.gif"));
+        }
     }
 }
