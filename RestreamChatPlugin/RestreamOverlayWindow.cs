@@ -86,44 +86,65 @@ namespace RestreamChatPlugin
                 if (Mode != "sidebar") BuildTracks();
             };
 
-            // 让本窗口始终位于所有窗口之上，包括其它同样置顶（Topmost）的应用：
-            // WPF 的 Topmost=true 只能压过非置顶窗口，遇到同样置顶的窗口会按 z 序被覆盖。
-            // 接管 WM_WINDOWPOSCHANGING，把插入点钉死为 HWND_TOPMOST 并清除 SWP_NOZORDER，
-            // 使任何把本窗口往下排的尝试都被即时拉回顶层（弹幕姬自带浮层即采用同一思路）。
+            // 让本窗口始终位于所有窗口之上，包括其它同样置顶（Topmost）的应用
+            // （如全屏播放器）：WPF 的 Topmost=true 只能压过非置顶窗口，且当其它窗口
+            // 通过置顶技术抢占 z 序时，本窗口会被挤到下方。采用与弹幕姬自带浮层一致的做法：
+            // ①扩展样式加 WS_EX_TRANSPARENT|WS_EX_TOOLWINDOW；②失焦（Deactivated）时重新置顶；
+            // ③每秒用定时器重新置顶一次，强制回到置顶 z 序顶端。
             SourceInitialized += (s, e) =>
             {
-                var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
-                source.AddHook(WndProc);
+                var hWnd = new WindowInteropHelper(this).Handle;
+                var ex = GetWindowLong(hWnd, GWL_EXSTYLE);
+                SetWindowLong(hWnd, GWL_EXSTYLE, ex | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW);
             };
+
+            Deactivated += (s, e) => { Topmost = true; };
+
+            _topmostTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _topmostTimer.Tick += TopmostKeepAlive_Tick;
+            Loaded += (s, e) => _topmostTimer.Start();
+            Closed += (s, e) => _topmostTimer.Stop();
         }
 
-        private const int WM_WINDOWPOSCHANGING = 0x0046;
-        private const uint SWP_NOZORDER = 0x0004;
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_TOPMOST = 0x00000008;
+        private const int WS_EX_TRANSPARENT = 0x00000020;
+        private const int WS_EX_TOOLWINDOW = 0x00000080;
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct WINDOWPOS
-        {
-            public IntPtr hwnd;
-            public IntPtr hwndInsertAfter;
-            public int x;
-            public int y;
-            public int cx;
-            public int cy;
-            public uint flags;
-        }
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
-        // 窗口位置即将变更时，强制本窗口维持在置顶 z 序：把插入点设为 HWND_TOPMOST（-1）
-        // 并清除 SWP_NOZORDER，使其余窗口的置顶操作无法把本窗口排到下方。
-        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        [DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        private readonly DispatcherTimer _topmostTimer;
+        private int _topmostKeepAliveTicks;
+
+        // 每秒重新置顶一次，抵御其它置顶窗口（如全屏播放器）抢占 z 序：
+        // 置顶的本质是把本窗口移到置顶链顶端，后调用者胜出；本定时器在其它窗口
+        // 抢占后再次置顶，使本浮层持续位于最上层。
+        private void TopmostKeepAlive_Tick(object sender, EventArgs e)
         {
-            if (msg == WM_WINDOWPOSCHANGING)
+            var hWnd = new WindowInteropHelper(this).Handle;
+            var wasTopmost = (GetWindowLong(hWnd, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+            if (!wasTopmost)
             {
-                var wp = (WINDOWPOS)Marshal.PtrToStructure(lParam, typeof(WINDOWPOS));
-                wp.hwndInsertAfter = new IntPtr(-1);
-                wp.flags = wp.flags & ~SWP_NOZORDER;
-                Marshal.StructureToPtr(wp, lParam, true);
+                var fg = GetForegroundWindow();
+                var sb = new System.Text.StringBuilder(256);
+                GetWindowText(fg, sb, sb.Capacity);
+                RestreamPlugin.Trace("置顶保活：本窗口丢失 WS_EX_TOPMOST，准备重新置顶；前台窗口=" + sb);
             }
-            return IntPtr.Zero;
+            Topmost = false;
+            Topmost = true;
+            _topmostKeepAliveTicks++;
+            if (_topmostKeepAliveTicks % 30 == 0)
+                RestreamPlugin.Trace("置顶保活心跳：WS_EX_TOPMOST=是（每隔约30秒）");
         }
 
         private void PositionToScreen()
@@ -391,7 +412,12 @@ namespace RestreamChatPlugin
             };
             span.Inlines.Add(new InlineUIContainer(img) { BaselineAlignment = BaselineAlignment.Center });
 
-            var cacheFile = EmoteCacheFile(url);
+            // Twitch 原生动画表情：Restream 下发的地址是 v1 模板静态 PNG，其动画资源在 v2 模板
+            // （多帧 GIF）。改写为 v2 动画地址优先下载；非 Twitch 表情或非 v1 模板时回退原地址。
+            // 缓存键按有效地址计算，避免旧的静态缓存被误用为动画。
+            var effectiveUrl = TwitchAnimatedEmoteUrl(url) ?? url;
+            var fallbackUrl = effectiveUrl == url ? null : url;
+            var cacheFile = EmoteCacheFile(effectiveUrl);
             var localPath = Path.Combine(EmoteCacheDir, cacheFile);
             if (File.Exists(localPath))
             {
@@ -399,15 +425,42 @@ namespace RestreamChatPlugin
             }
             else
             {
-                EnsureEmoteCachedAsync(cacheFile, url).ContinueWith(t =>
+                EnsureEmoteCachedAsync(cacheFile, effectiveUrl, fallbackUrl).ContinueWith(t =>
                 {
                     var path = t.Status == TaskStatus.RanToCompletion ? t.Result : null;
-                    try { img.Dispatcher.Invoke(() => TrySetEmoteImage(img, path, span, fallbackText)); }
-                    catch { }
                     if (path == null) _emoteDownloads.TryRemove(cacheFile, out _);
+                    // 仅当表情图片仍在可视化树中才渲染：若消息已消失（被移除出树），不再设置源，
+                    // 避免对其启动 GIF 动画定时器却永远等不到 Unloaded 而泄漏 GDI+ 资源与定时器。
+                    if (img.IsLoaded)
+                    {
+                        try { img.Dispatcher.Invoke(() => TrySetEmoteImage(img, path, span, fallbackText)); }
+                        catch { }
+                    }
                 });
             }
             return span;
+        }
+
+        // Twitch 原生动画表情地址改写：将 v1 模板的静态 PNG（/emoticons/v1/{id}/{scale}）改写为
+        // v2 模板的动画 GIF（/emoticons/v2/{id}/animated/dark/3.0）。非 Twitch 静态 CDN 或非 v1
+        // 模板（如 BTTV/7TV 已是 GIF、或旧版数字 id）返回 null，保持原地址不变。
+        internal static string TwitchAnimatedEmoteUrl(string url)
+        {
+            try
+            {
+                var u = new Uri(url);
+                if (!u.Host.Equals("static-cdn.jtvnw.net", StringComparison.OrdinalIgnoreCase)) return null;
+                var seg = u.AbsolutePath.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                if (seg.Length != 4 || seg[0] != "emoticons" || seg[1] != "v1") return null;
+                var id = seg[2];
+                if (string.IsNullOrEmpty(id)) return null;
+                // 仅 emotesv2_ 前缀的现代表情具备 v2 动画资源；其余（如旧版数字 id）无 v2 资源，
+                // 改写后必 404，直接保持原 v1 静态地址（由上层回退），避免无谓的网络请求。
+                if (!id.StartsWith("emotesv2_", StringComparison.OrdinalIgnoreCase)) return null;
+                RestreamPlugin.Trace("Twitch 原生动画表情改写：" + url + " -> v2/animated");
+                return "https://static-cdn.jtvnw.net/emoticons/v2/" + id + "/animated/dark/3.0";
+            }
+            catch { return null; }
         }
 
         // 表情包缓存文件名：以 URL 的 SHA-1 作键（避免远程路径中的特殊字符污染本地文件名），
@@ -424,36 +477,44 @@ namespace RestreamChatPlugin
             }
         }
 
-        // 确保某表情包图片已下载到本地缓存：下载首个可用结果并落盘后返回本地路径，失败返回 null。
-        // 并发的同名请求共享同一任务，避免重复下载。
-        private static Task<string> EnsureEmoteCachedAsync(string cacheFile, string url)
+        // 确保某表情包图片已下载到本地缓存：优先下载有效地址，失败时回退原地址（静态 PNG），
+        // 落盘后返回本地路径，全部失败返回 null。并发的同名请求共享同一任务，避免重复下载。
+        private static Task<string> EnsureEmoteCachedAsync(string cacheFile, string effectiveUrl, string fallbackUrl)
         {
             return _emoteDownloads.GetOrAdd(cacheFile, key => Task.Run(async () =>
             {
-                try
+                var path = await DownloadEmoteToFile(effectiveUrl, cacheFile);
+                if (path == null && fallbackUrl != null) path = await DownloadEmoteToFile(fallbackUrl, cacheFile);
+                return path;
+            }));
+        }
+
+        // 将单个表情地址下载并落盘到本地缓存：成功返回本地路径，失败（网络/404/非图片）返回 null。
+        private static async Task<string> DownloadEmoteToFile(string url, string cacheFile)
+        {
+            try
+            {
+                Directory.CreateDirectory(EmoteCacheDir);
+                using (var http = NewImageHttpClient())
                 {
-                    Directory.CreateDirectory(EmoteCacheDir);
-                    using (var http = NewImageHttpClient())
+                    var bytes = await http.GetByteArrayAsync(url).ConfigureAwait(false);
+                    if (bytes != null && bytes.Length > 0)
                     {
-                        var bytes = await http.GetByteArrayAsync(url).ConfigureAwait(false);
-                        if (bytes != null && bytes.Length > 0)
-                        {
-                            var path = Path.Combine(EmoteCacheDir, cacheFile);
-                            var tmp = path + ".tmp";
-                            File.WriteAllBytes(tmp, bytes);
-                            if (File.Exists(path)) File.Delete(path);
-                            File.Move(tmp, path);
-                            RestreamPlugin.Trace("表情包已缓存：" + cacheFile);
-                            return path;
-                        }
+                        var path = Path.Combine(EmoteCacheDir, cacheFile);
+                        var tmp = path + ".tmp";
+                        File.WriteAllBytes(tmp, bytes);
+                        if (File.Exists(path)) File.Delete(path);
+                        File.Move(tmp, path);
+                        RestreamPlugin.Trace("表情包已缓存：" + cacheFile + " <- " + url);
+                        return path;
                     }
                 }
-                catch (Exception ex)
-                {
-                    RestreamPlugin.Trace("表情包下载失败：" + url + " -> " + ex.Message);
-                }
-                return null;
-            }));
+            }
+            catch (Exception ex)
+            {
+                RestreamPlugin.Trace("表情包下载失败：" + url + " -> " + ex.Message);
+            }
+            return null;
         }
 
         // emoji 渲染为 Twemoji 高清图片：多 CDN 镜像回退（国内 jsDelivr 常被墙，
@@ -577,25 +638,39 @@ namespace RestreamChatPlugin
             }));
         }
 
-        // 设置图片源：按内容解码（扩展名不影响识别）。动画 GIF 用 GifBitmapDecoder 逐帧播放，
+        // 设置图片源：入参为本地文件路径或 file:// URI 字符串（二者皆可），统一转回本地路径后
+        // 按内容解码（扩展名不影响识别）。动画 GIF 走 GDI+ 逐帧绘制（StartGifAnimation），
         // 其余格式走静态 BitmapImage。WPF 的 Image 默认只显示 GIF 首帧、不会动，故需手动驱动。
         private static void SetImageSource(Image img, string path)
         {
-            if (IsGifFile(path) && StartGifAnimation(img, path)) return;
+            var local = ToLocalPath(path);
+            if (IsGifFile(local) && StartGifAnimation(img, local)) return;
             var bi = new BitmapImage();
             bi.BeginInit();
-            bi.UriSource = new Uri(path);
+            bi.UriSource = new Uri(local);
             bi.EndInit();
             img.Source = bi;
         }
 
+        // 把本地文件路径或 file:// URI 字符串统一转回本地文件路径。
+        // GDI+ 的 Image.FromFile 只接受普通路径、不接受 file:// URI，故此处归一成路径。
+        internal static string ToLocalPath(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return s;
+            if (s.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+            {
+                try { return new Uri(s).LocalPath; } catch { }
+            }
+            return s;
+        }
+
         // 是否 GIF 文件：读前 3 字节「GIF」魔数判定（与扩展名无关，BTTV 等无扩展名 URL 也能识别）。
-        // 入参为 file:// 绝对 URI 字符串，转成本地路径后再读。
-        private static bool IsGifFile(string uriString)
+        // 入参为本地路径或 file:// URI 字符串，转成本地路径后再读。
+        internal static bool IsGifFile(string path)
         {
             try
             {
-                var local = new Uri(uriString).LocalPath;
+                var local = ToLocalPath(path);
                 using (var fs = new FileStream(local, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     var head = new byte[3];
@@ -605,48 +680,104 @@ namespace RestreamChatPlugin
             catch { return false; }
         }
 
-        // 播放动画 GIF：用 GifBitmapDecoder 解码全部帧，按各帧「图像控制扩展」里的延时（Delay，
-        // 单位 1/100 秒）循环切换。单帧 GIF 直接作为静态图返回。成功返回 true，解码失败返回 false
-        // （交由上层回退静态 BitmapImage 或文字）。图片从可视化树移除时停止定时器，避免空转与泄漏。
+        // 播放动画 GIF：用 GDI+（System.Drawing.Image）解码并逐帧绘制到 WriteableBitmap。
+        // GIF 多帧时 GifBitmapDecoder 配合 BitmapCacheOption.None 二次取帧会抛异常，使定时器首帧后即停、表现为静态，
+        // 故此处用 GDI+ 逐帧 SelectActiveFrame 后用 Graphics.DrawImage 绘到 32 位 ARGB 位图再拷贝至 WriteableBitmap，
+        // 透明背景正确保留。单帧 GIF 作为静态图返回。成功返回 true，解码失败返回 false
+        // （交由上层回退静态 BitmapImage 或文字）。图片从可视化树移除（Unloaded）时停止定时器并释放 GDI+ 资源，
+        // 避免空转与泄漏。
         private static bool StartGifAnimation(Image img, string path)
         {
-            GifBitmapDecoder decoder;
+            System.Drawing.Image gdi;
             try
             {
-                decoder = new GifBitmapDecoder(new Uri(path), BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                gdi = System.Drawing.Image.FromFile(path);
             }
-            catch { return false; }
-            if (decoder.Frames.Count <= 1)
+            catch (Exception ex)
             {
-                img.Source = decoder.Frames[0];
+                RestreamPlugin.Trace("GIF 解码失败：" + path + " -> " + ex.Message);
+                return false;
+            }
+            int frameCount;
+            try { frameCount = gdi.GetFrameCount(System.Drawing.Imaging.FrameDimension.Time); }
+            catch { frameCount = 1; }
+            if (frameCount <= 1)
+            {
+                // 单帧：直接绘成静态图后释放 GDI+ 资源。
+                var wb = new WriteableBitmap(Math.Max(1, gdi.Width), Math.Max(1, gdi.Height), 96, 96, PixelFormats.Bgra32, null);
+                try { DrawGdiFrameToWriteable(gdi, wb); img.Source = wb; }
+                catch (Exception ex) { RestreamPlugin.Trace("GIF 单帧绘制失败：" + path + " -> " + ex.Message); }
+                gdi.Dispose();
+                RestreamPlugin.Trace("GIF 为单帧（静态）：" + path);
                 return true;
             }
-            var delays = new int[decoder.Frames.Count];
-            for (var i = 0; i < decoder.Frames.Count; i++)
-            {
-                var delay = 100;
-                try
-                {
-                    if (decoder.Frames[i].Metadata is BitmapMetadata meta && meta.ContainsQuery("/grctlext/Delay"))
-                        delay = Math.Max(10, Convert.ToInt32(meta.GetQuery("/grctlext/Delay")) * 10);
-                }
-                catch { }
-                delays[i] = delay;
-            }
+            var bitmap = new WriteableBitmap(gdi.Width, gdi.Height, 96, 96, PixelFormats.Bgra32, null);
+            img.Source = bitmap;
+            var delays = ReadGifFrameDelays(gdi, frameCount);
             var idx = 0;
-            img.Source = decoder.Frames[0];
-            // StartGifAnimation 在 img.Dispatcher.Invoke 内调用，当前线程即 UI 调度器，
-            // DispatcherTimer 默认在其上触发；图片移出可视化树时停止定时器，避免空转与泄漏。
+            DrawGdiFrameToWriteable(gdi, bitmap);
+            RestreamPlugin.Trace("GIF 动画开始：" + path + " 帧数=" + frameCount);
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(delays[0]) };
             timer.Tick += (s, e) =>
             {
-                idx = (idx + 1) % decoder.Frames.Count;
-                img.Source = decoder.Frames[idx];
-                timer.Interval = TimeSpan.FromMilliseconds(delays[idx]);
+                try
+                {
+                    idx = (idx + 1) % frameCount;
+                    gdi.SelectActiveFrame(System.Drawing.Imaging.FrameDimension.Time, idx);
+                    DrawGdiFrameToWriteable(gdi, bitmap);
+                    timer.Interval = TimeSpan.FromMilliseconds(delays[idx]);
+                }
+                catch (Exception ex)
+                {
+                    RestreamPlugin.Trace("GIF 帧切换异常（停止动画）：" + path + " idx=" + idx + " -> " + ex.Message);
+                    timer.Stop();
+                }
             };
-            img.Unloaded += (s, e) => timer.Stop();
+            img.Unloaded += (s, e) =>
+            {
+                timer.Stop();
+                try { gdi.Dispose(); } catch { }
+            };
             timer.Start();
             return true;
+        }
+
+        // 按 GIF 的帧延时（PropertyItem 0x5100，单位 1/100 秒）构建每帧间隔；读取失败或缺失时回退 100ms。
+        private static int[] ReadGifFrameDelays(System.Drawing.Image gdi, int frameCount)
+        {
+            var delays = new int[frameCount];
+            for (var i = 0; i < frameCount; i++) delays[i] = 100;
+            try
+            {
+                var pi = gdi.GetPropertyItem(0x5100);
+                if (pi != null && pi.Type == 4 && pi.Value != null)
+                {
+                    var n = pi.Value.Length / 4;
+                    for (var i = 0; i < n && i < frameCount; i++)
+                        delays[i] = Math.Max(10, BitConverter.ToInt32(pi.Value, i * 4) * 10);
+                }
+            }
+            catch { }
+            return delays;
+        }
+
+        // 把 GDI+ 图像当前激活帧绘制到 32 位 ARGB 位图，再拷贝像素到 WriteableBitmap（Bgra32）。
+        // 先清为透明再用 DrawImage 绘制，使 GIF 的透明色索引正确保留为透明像素。
+        private static void DrawGdiFrameToWriteable(System.Drawing.Image gdi, WriteableBitmap wb)
+        {
+            using (var bmp = new System.Drawing.Bitmap(gdi.Width, gdi.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+            using (var g = System.Drawing.Graphics.FromImage(bmp))
+            {
+                g.Clear(System.Drawing.Color.Transparent);
+                g.DrawImage(gdi, 0, 0, gdi.Width, gdi.Height);
+                var rect = new System.Drawing.Rectangle(0, 0, bmp.Width, bmp.Height);
+                var data = bmp.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, bmp.PixelFormat);
+                try
+                {
+                    wb.WritePixels(new Int32Rect(0, 0, bmp.Width, bmp.Height), data.Scan0, data.Stride * bmp.Height, data.Stride);
+                }
+                finally { bmp.UnlockBits(data); }
+            }
         }
 
         // 表情包图片：缓存命中或下载完成后调用；加载失败（文件损坏/格式不支持）或无可用
@@ -656,7 +787,7 @@ namespace RestreamChatPlugin
             try
             {
                 if (path == null) throw new InvalidOperationException("无可用图片");
-                SetImageSource(img, new Uri(path).AbsoluteUri);
+                SetImageSource(img, path);
             }
             catch
             {
@@ -671,7 +802,7 @@ namespace RestreamChatPlugin
             try
             {
                 if (path == null) throw new InvalidOperationException("无可用图片");
-                SetImageSource(img, new Uri(path).AbsoluteUri);
+                SetImageSource(img, path);
             }
             catch
             {

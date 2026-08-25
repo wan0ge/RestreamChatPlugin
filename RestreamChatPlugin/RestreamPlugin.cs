@@ -72,7 +72,7 @@ namespace RestreamChatPlugin
             PluginName = L10n.T("Restream 聚合聊天", "Restream アグリゲートチャット", "Restream Aggregated Chat");
             PluginAuth = "Elegy233";
             PluginCont = "HXDD233@qq.com";
-            PluginVer = "v1.4.0";
+            PluginVer = "v1.5.0";
             PluginDesc = L10n.T(
                 "通过 Restream Chat API 把多平台的聊天集成至弹幕姬（无需连接 B 站）",
                 "Restream Chat API で複数プラットフォームのチャットを弾幕姫に統合（B 站接続不要）",
@@ -458,7 +458,7 @@ namespace RestreamChatPlugin
             return false;
         }
 
-        private static bool IsExpired(PluginConfig cfg)
+        internal static bool IsExpired(PluginConfig cfg)
         {
             // 提前 5 分钟视为过期，留出续期缓冲
             return cfg.AccessTokenExpiresAt > 0 &&

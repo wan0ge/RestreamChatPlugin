@@ -95,10 +95,36 @@ Restream Chat 会把你账号下所有已连接平台的聊天聚合成一条实
 ## 目录结构
 
 ```
-RestreamChatPlugin/              插件主工程（legacy csproj + 内嵌 Newtonsoft.Json）
-RestreamChatPlugin.Tests/        MSTest 单元测试
-RestreamChatPlugin.Tests.Runner/ 反射式测试运行器
-LICENSE                          MIT
+RestreamChatPlugin-oss/
+├── RestreamChatPlugin/              插件主工程（legacy csproj，产物为单文件 DLL，内嵌 Newtonsoft.Json）
+│   ├── RestreamPlugin.cs            插件入口（DMPlugin 实现）：生命周期、授权流程编排、WebSocket 连接与重连、独立浮层开关、本地化、版本号 PluginVer
+│   ├── RestreamChatClient.cs        Restream Chat API 客户端：WebSocket 连接、消息帧解析（ParseFrame）、事件/聊天/订阅类型、代理模式接入
+│   ├── RestreamOverlayWindow.cs     独立浮层窗口（WPF，纯代码构建）：透明/置顶/鼠标穿透；滚动与侧边栏布局；emoji 与第三方表情图片渲染；GIF 动画；置顶保活
+│   ├── EmoteProvider.cs             第三方表情（BTTV/FFZ/7TV）名称→图片地址映射，适配当前 API；URL 拼装辅助
+│   ├── AdminWindow.cs               设置窗口：授权、代理、独立浮层开关与布局、调试日志、本地化（中/日/英）
+│   ├── Config.cs                    配置读写与目录解析（PluginRoot）、代理模式解析与旧字段迁移、HttpClient/WebSocket 代理应用
+│   ├── L10n.cs                      本地化辅助：按进程 CultureInfo 选 中/日/英
+│   ├── build.bat                   调用 VS 自带 MSBuild 编译本工程
+│   ├── RestreamChatPlugin.csproj    工程文件（legacy csproj + PackageReference）
+│   ├── Properties/
+│   │   └── AssemblyInfo.cs         程序集元信息（版本号 AssemblyVersion / AssemblyFileVersion）
+│   └── Libs/
+│       └── Newtonsoft.Json.dll     内嵌资源，随产物打进 DLL，运行时由 AssemblyResolve 加载
+├── RestreamChatPlugin.Tests/       MSTest 单元测试
+│   ├── Tests.cs                     覆盖 ParseFrame、BuildDanmakuName、Config.PluginRoot、内嵌资源、emoji 码点/分段/缓存、表情包缓存、ExtractAuthCode、代理模式、EmoteProvider URL 拼装等常规与边缘情况
+│   ├── Tests_EmoteAndGif.cs         覆盖动态表情修复相关纯逻辑：TwitchAnimatedEmoteUrl（v1→v2 改写，含旧版数字 id/非 Twitch/BTTV/7TV/非法 URL 等分支）、ToLocalPath（file:// 归一）、IsExpired（5 分钟续期缓冲边界）、IsGifFile（GIF 魔数判定，含 PNG/不存在文件）
+│   └── RestreamChatPlugin.Tests.csproj  测试工程文件
+├── RestreamChatPlugin.Tests.Runner/  反射式测试运行器（无 VSTest testhost 环境下直接加载测试程序集逐个执行）
+│   ├── Program.cs                   运行器入口
+│   └── Runner.csproj                运行器工程文件
+├── dist/
+│   └── RestreamChatPlugin.dll      构建产物（单文件，已内嵌 Newtonsoft.Json），即发版用 DLL
+├── docs/
+│   ├── preview.png                 消息效果预览图
+│   └── preview2.png                设置窗口预览图
+├── LICENSE                         MIT 许可证
+├── README.md                       本说明文档
+└── .gitignore                      Git 忽略规则（bin/obj 等）
 ```
 
 ## 许可证

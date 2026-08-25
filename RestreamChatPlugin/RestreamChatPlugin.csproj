@@ -42,6 +42,7 @@
     <Reference Include="System.Xml.Linq"/>
     <Reference Include="Microsoft.CSharp"/>
     <Reference Include="WindowsBase"/>
+    <Reference Include="System.Drawing"/>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="RestreamPlugin.cs"/>
