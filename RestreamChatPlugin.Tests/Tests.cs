@@ -180,7 +180,7 @@ namespace RestreamChatPlugin.Tests
             Assert.IsFalse(string.IsNullOrEmpty(f.Error));
         }
 
-        // ===== BuildDanmakuName：弹幕命名（修复开头多余冒号） =====
+        // ===== BuildDanmakuName：弹幕命名（避免开头多余冒号） =====
 
         [TestMethod]
         public void BuildDanmakuName_WithUser()
