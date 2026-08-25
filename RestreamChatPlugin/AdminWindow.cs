@@ -60,7 +60,7 @@ namespace RestreamChatPlugin
             _plugin.AuthorizationCompleted += _authHandler;
             Closed += (s, e) => _plugin.AuthorizationCompleted -= _authHandler;
 
-            Title = "Restream 聚合聊天 · 设置";
+            Title = "Restream 聚合聊天集成 · 设置";
             Width = 660;
             Height = 780;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
@@ -87,7 +87,7 @@ namespace RestreamChatPlugin
             var titles = new StackPanel();
             titles.Children.Add(new TextBlock
             {
-                Text = L10n.T("Restream 聚合聊天", "Restream アグリゲートチャット", "Restream Aggregated Chat"),
+                Text = L10n.T("Restream 聚合聊天集成", "Restream アグリゲートチャット統合", "Restream Aggregated Chat Integration"),
                 FontSize = 21,
                 FontWeight = FontWeights.Bold,
                 Foreground = Brushes.White
