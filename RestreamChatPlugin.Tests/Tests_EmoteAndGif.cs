@@ -5,7 +5,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace RestreamChatPlugin.Tests
 {
-    // 覆盖本次修复新增/调整的纯逻辑（无 WPF/网络依赖，可在 net48 测试主机直接运行）：
+    // 覆盖表情动画地址改写、本地路径归一、token 过期判定与 GIF 魔数识别等纯逻辑（无 WPF/网络依赖，可在 net48 测试主机直接运行）：
     //   TwitchAnimatedEmoteUrl —— Twitch 原生动画表情的 v1 静态地址改写为 v2 动画 GIF 地址；
     //   ToLocalPath            —— file:// URI 归一为本地路径（GDI+ Image.FromFile 只认本地路径）；
     //   IsExpired             —— access token 过期判定（提前 5 分钟缓冲）；

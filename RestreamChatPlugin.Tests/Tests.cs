@@ -524,6 +524,8 @@ namespace RestreamChatPlugin.Tests
             // 避免破坏已配置代理的用户。
             var path = System.IO.Path.Combine(Config.PluginRoot, "config.json");
             string backup = File.Exists(path) ? File.ReadAllText(path) : null;
+            // 测试环境数据子目录（Config.PluginRoot）可能尚未创建，写入前先建目录；生产由 Config.Save 负责。
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
             try
             {
                 File.WriteAllText(path, "{\"Proxy\":\"http://127.0.0.1:7890\",\"ClientId\":\"x\"}");
@@ -544,6 +546,8 @@ namespace RestreamChatPlugin.Tests
             // 旧版留空（曾等同系统代理）迁移后默认直连（none），符合“默认不走系统代理”的要求。
             var path = System.IO.Path.Combine(Config.PluginRoot, "config.json");
             string backup = File.Exists(path) ? File.ReadAllText(path) : null;
+            // 测试环境数据子目录（Config.PluginRoot）可能尚未创建，写入前先建目录；生产由 Config.Save 负责。
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
             try
             {
                 File.WriteAllText(path, "{\"Proxy\":\"\",\"ClientId\":\"x\"}");
@@ -563,6 +567,8 @@ namespace RestreamChatPlugin.Tests
             // 分支：ProxyMode 为非法值时回落到直连，避免未知模式造成不确定行为。
             var path = System.IO.Path.Combine(Config.PluginRoot, "config.json");
             string backup = File.Exists(path) ? File.ReadAllText(path) : null;
+            // 测试环境数据子目录（Config.PluginRoot）可能尚未创建，写入前先建目录；生产由 Config.Save 负责。
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
             try
             {
                 File.WriteAllText(path, "{\"ProxyMode\":\"bogus\",\"ProxyUrl\":\"http://x\"}");
@@ -610,7 +616,7 @@ namespace RestreamChatPlugin.Tests
                 EmoteProvider.SevenTvEmoteUrl("//cdn.7tv.app/emote/x/", "2x.gif"));
         }
 
-        // ===== ParseFrame：表情范围边界（v1.5.2 修复，发现3）=====
+        // ===== ParseFrame：表情范围边界（畸形范围过滤）=====
         // 畸形范围（from/to 越界或反向）若不过滤，会在 AppendMessage 的 Substring 触发
         // ArgumentOutOfRangeException 并被 PushDanmaku 吞掉，导致整条消息丢失；
         // 正确行为是丢弃该表情范围、保留消息正文。
@@ -658,9 +664,9 @@ namespace RestreamChatPlugin.Tests
             Assert.AreEqual(7, f.Emotes[0].End);
         }
 
-        // ===== IsAuthHttpError：token 端点 4xx 识别（v1.5.2 修复，发现2）=====
-        // token 端点以 "HTTP 401 ..." 形式抛出（无括号），旧实现只匹配 (401)/(403)/400 字面量，
-        // 导致 401/403 被误判为瞬断而无效重试；修复后从消息提取状态码，4xx（除 429 限流）即鉴权失败。
+        // ===== IsAuthHttpError：token 端点 4xx 识别（从消息文本提取状态码）=====
+        // token 端点以 "HTTP 401 ..." 形式抛出（无括号），仅匹配字面量 (401)/(403)/400 会漏判 401/403 为瞬断；
+        // 故从消息文本提取状态码，4xx（除 429 限流）即判为鉴权失败。
 
         [TestMethod]
         public void IsAuthHttpError_Http401Message_True()

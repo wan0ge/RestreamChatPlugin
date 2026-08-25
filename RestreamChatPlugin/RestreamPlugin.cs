@@ -53,6 +53,8 @@ namespace RestreamChatPlugin
         private bool _authRetried;
         // 鉴权已彻底失败（续期也失败），重连循环据此直接停止，改提示用户重新授权。
         private bool _authFailed;
+        // 连接流程并发守卫：原子标志，避免断连/重连间隙并发建出重复 WebSocket（同一聊天投两遍弹幕）。
+        private int _connecting = 0;
 
         // 授权流程结束（成功或失败）时触发，供设置窗口刷新状态文案。
         // 在后台线程触发，订阅方需切回 UI 线程更新控件。参数为失败原因；成功传 null。
@@ -72,7 +74,7 @@ namespace RestreamChatPlugin
             PluginName = L10n.T("Restream 聚合聊天集成", "Restream アグリゲートチャット統合", "Restream Aggregated Chat Integration");
             PluginAuth = "Elegy233";
             PluginCont = "HXDD233@qq.com";
-            PluginVer = "v1.5.2";
+            PluginVer = "v1.5.3";
             PluginDesc = L10n.T(
                 "通过 Restream Chat API 把多平台的聊天集成至弹幕姬（无需连接 B 站）",
                 "Restream Chat API で複数プラットフォームのチャットを弾幕姫に統合（B 站接続不要）",
@@ -541,64 +543,73 @@ namespace RestreamChatPlugin
                 Log("连接已在运行，配置已即时套用（浮层布局等），未重建连接。");
                 return;
             }
-
-            if (!await EnsureTokenAsync())
+            // 并发守卫：Connect（保存并连接/自动恢复）与 ScheduleReconnect 可能在断连/重连间隙
+            // 并发进入，用原子标志丢弃冗余调用，避免建出重复 WebSocket 导致同一聊天投两遍弹幕。
+            if (System.Threading.Interlocked.Exchange(ref _connecting, 1) == 1) return;
+            try
             {
-                Trace("Connect 终止：token 不可用");
-                // 非鉴权类失败（多为启动瞬间网络/代理未就绪的瞬断）交由重连循环自动重试，
-                // 避免一次性误报后停滞；确属 token 失效（_authFailed）则不重试，仅提示重新授权。
-                if (!_authFailed && this.Status) ScheduleReconnect();
-                return;
-            }
-
-            Trace("token 可用，准备建立 WebSocket 连接");
-            _connected = false;
-            var cfg = Config.Load();
-            _client?.Disconnect();
-            _client = new RestreamChatClient(cfg.AccessToken, cfg.ProxyMode, cfg.ProxyUrl);
-            // 连接信息里带当前频道与平台，用于拉取 Twitch emote（Kappa 等显示为图片）。
-            _client.OnChannelInfo += (targetId, eventSourceId) =>
-            {
-                if (eventSourceId != 2) return; // 仅 Twitch 有 BTTV/FFZ/7TV 表情生态
-                Task.Run(async () =>
+                if (!await EnsureTokenAsync())
                 {
-                    try
+                    Trace("Connect 终止：token 不可用");
+                    // 非鉴权类失败（多为启动瞬间网络/代理未就绪的瞬断）交由重连循环自动重试，
+                    // 避免一次性误报后停滞；确属 token 失效（_authFailed）则不重试，仅提示重新授权。
+                    if (!_authFailed && this.Status) ScheduleReconnect();
+                    return;
+                }
+
+                Trace("token 可用，准备建立 WebSocket 连接");
+                _connected = false;
+                var cfg = Config.Load();
+                _client?.Disconnect();
+                _client = new RestreamChatClient(cfg.AccessToken, cfg.ProxyMode, cfg.ProxyUrl);
+                // 连接信息里带当前频道与平台，用于拉取 Twitch emote（Kappa 等显示为图片）。
+                _client.OnChannelInfo += (targetId, eventSourceId) =>
+                {
+                    if (eventSourceId != 2) return; // 仅 Twitch 有 BTTV/FFZ/7TV 表情生态
+                    Task.Run(async () =>
                     {
-                        var em = await EmoteProvider.FetchTwitchAsync(targetId, cfg.ProxyMode, cfg.ProxyUrl);
-                        lock (_emotes)
+                        try
                         {
-                            foreach (var kv in em)
-                                if (!_emotes.ContainsKey(kv.Key)) _emotes[kv.Key] = kv.Value;
+                            var em = await EmoteProvider.FetchTwitchAsync(targetId, cfg.ProxyMode, cfg.ProxyUrl);
+                            lock (_emotes)
+                            {
+                                foreach (var kv in em)
+                                    if (!_emotes.ContainsKey(kv.Key)) _emotes[kv.Key] = kv.Value;
+                            }
+                            Trace("Twitch emote 已拉取：" + em.Count + " 个");
                         }
-                        Trace("Twitch emote 已拉取：" + em.Count + " 个");
-                    }
-                    catch (Exception ex) { Trace("emote 拉取失败: " + ex.Message); }
-                });
-            };
-            _client.OnMessage += (platform, user, text, emotes) =>
+                        catch (Exception ex) { Trace("emote 拉取失败: " + ex.Message); }
+                    });
+                };
+                _client.OnMessage += (platform, user, text, emotes) =>
+                {
+                    // 一条聚合聊天 -> 一条弹幕。平台名做前缀便于区分来源。
+                    // 同时写入弹幕姬官方日志面板，便于在面板里直接看到收到的聊天；
+                    // 详细链路（含表情范围）另走调试日志 Trace。
+                    Trace("[收到聊天] " + platform + " " + user + ": " + text + " | 表情 " + (emotes == null ? 0 : emotes.Count) + " 个");
+                    this.Log("[" + platform + "] " + user + ": " + text);
+                    PushDanmaku(platform, user, text, emotes);
+                };
+                _client.OnStatus += msg =>
+                {
+                    Log(msg);
+                    Trace("[状态] " + msg);
+                    // 连接成功置 true、异常/停止置 false，供重连循环判定是否恢复。
+                    // 连上即清掉鉴权失败标记，使后续若真断连可正常重连。
+                    if (msg.Contains("已连接")) { _connected = true; _authRetried = false; _authFailed = false; }
+                    else if (msg.Contains("异常") || msg.Contains("已停止")) _connected = false;
+                    // 重连提示不必滚成弹幕（避免反复刷屏），仅连上/断开等关键状态进弹幕列表。
+                    if (!msg.Contains("重连")) PushDanmaku("Restream", "", msg, null);
+                };
+                _client.OnUnexpectedDisconnect += ScheduleReconnect;
+                // 鉴权失败（401）不重连：尝试 refresh 续期一次，失败则提示重新授权。
+                _client.OnAuthFailure += () => Task.Run(async () => await HandleAuthFailureAsync());
+                _client.Connect();
+            }
+            finally
             {
-                // 一条聚合聊天 -> 一条弹幕。平台名做前缀便于区分来源。
-                // 同时写入弹幕姬官方日志面板，便于在面板里直接看到收到的聊天；
-                // 详细链路（含表情范围）另走调试日志 Trace。
-                Trace("[收到聊天] " + platform + " " + user + ": " + text + " | 表情 " + (emotes == null ? 0 : emotes.Count) + " 个");
-                this.Log("[" + platform + "] " + user + ": " + text);
-                PushDanmaku(platform, user, text, emotes);
-            };
-            _client.OnStatus += msg =>
-            {
-                Log(msg);
-                Trace("[状态] " + msg);
-                // 连接成功置 true、异常/停止置 false，供重连循环判定是否恢复。
-                // 连上即清掉鉴权失败标记，使后续若真断连可正常重连。
-                if (msg.Contains("已连接")) { _connected = true; _authRetried = false; _authFailed = false; }
-                else if (msg.Contains("异常") || msg.Contains("已停止")) _connected = false;
-                // 重连提示不必滚成弹幕（避免反复刷屏），仅连上/断开等关键状态进弹幕列表。
-                if (!msg.Contains("重连")) PushDanmaku("Restream", "", msg, null);
-            };
-            _client.OnUnexpectedDisconnect += ScheduleReconnect;
-            // 鉴权失败（401）不重连：尝试 refresh 续期一次，失败则提示重新授权。
-            _client.OnAuthFailure += () => Task.Run(async () => await HandleAuthFailureAsync());
-            _client.Connect();
+                System.Threading.Interlocked.Exchange(ref _connecting, 0);
+            }
         }
 
         // 鉴权失败（401）处理：不进入 5 分钟重连循环。先尝试用 refresh token 续期一次；
@@ -627,8 +638,14 @@ namespace RestreamChatPlugin
             }
             else
             {
-                _authFailed = true;
-                Log("续期失败（refresh token 也已失效或缺失）。请重新授权：点击「登录并授权」，或第 ④ 步手动填入新的 access token。");
+                // 仅当刷新被服务器明确拒绝才认定 token 失效；否则（网络瞬断）交由重连循环重试。
+                // RefreshTokenWithRetryAsync 已在「服务器明确拒绝(4xx)」时置 _authFailed=true 并提示重新授权，
+                // 此处复用该判定，不重复覆盖（避免网络瞬断被误判为永久失效而锁死重连）。
+                if (!_authFailed && this.Status)
+                {
+                    Log("续期暂未成功（网络/传输层错误，非 token 失效），将自动重试。");
+                    ScheduleReconnect();
+                }
             }
         }
 

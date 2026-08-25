@@ -75,9 +75,12 @@ namespace RestreamChatPlugin
                         // 新模型默认直连（none），仅当旧值非空时沿用为 custom，避免破坏已配置代理的用户。
                         try
                         {
-                            if (string.IsNullOrEmpty(c.ProxyMode))
+                            // 旧版配置只有 "Proxy" 字段、没有 "ProxyMode" 键（当前类序列化总会写出 ProxyMode，
+                            // 故 ProxyMode 键缺失即代表旧版）。按旧语义迁移：非空=自定义(custom)、空=直连(none)。
+                            var jo = JObject.Parse(json);
+                            if (jo["ProxyMode"] == null)
                             {
-                                var legacy = (string)JObject.Parse(json)["Proxy"];
+                                var legacy = (string)jo["Proxy"];
                                 if (!string.IsNullOrWhiteSpace(legacy))
                                 {
                                     c.ProxyUrl = legacy.Trim();
