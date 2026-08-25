@@ -1,6 +1,6 @@
 # RestreamChatPlugin
 
-通过 [Restream](https://restream.io) Chat API 把 Twitch / YouTube / Kick 等多平台直播聊天聚合，滚成弹幕姬（bililive_dm）的弹幕。**无需连接 B 站直播间**，只要有一个 Restream 账号并授权 Chat API，即可把各平台的聊天与表情直接显示在本地的弹幕姬窗口里。
+[弹幕姬](https://www.danmuji.org/)插件，通过 Restream Chat API 把 Twitch / YouTube / Kick 等多平台直播聊天聚合为弹幕姬弹幕。**无需连接 B 站直播间**，只要有一个 Restream 账号并授权 Chat API，即可把各平台的聊天与表情直接显示在本地的弹幕姬窗口里。
 
 ## 功能特性
 
@@ -25,6 +25,16 @@
 ## 安装
 
 下载 `RestreamChatPlugin.dll`，放入 `我的文档\弹幕姬\plugins\`，重启弹幕姬即可。插件首次运行会在 `Plugins\RestreamChatPlugin\` 下自动创建数据目录，用于存放配置文件与表情包缓存。
+
+## 预览
+
+**消息效果**（多平台聊天滚成弹幕姬弹幕）
+
+![消息效果预览](docs/preview.png)
+
+**设置窗口**（授权、代理、浮层等）
+
+![设置窗口预览](docs/preview2.png)
 
 ## 使用方法
 
