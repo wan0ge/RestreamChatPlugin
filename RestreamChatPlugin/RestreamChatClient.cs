@@ -237,12 +237,17 @@ namespace RestreamChatPlugin
                     var replaces = eventPayload["replaces"] as JArray;
                     if (replaces != null)
                     {
+                        // 表情范围相对 text 字符索引；畸形（from<0、to<from、to 越界）会在
+                        // AppendMessage 的 Substring 触发越界异常并被外层吞掉导致整条消息丢失，
+                        // 故在此过滤掉不可信范围，仅丢弃该表情而非整条消息。
+                        var textLen = text == null ? 0 : text.Length;
                         foreach (var r in replaces)
                         {
                             var from = (int?)r["from"];
                             var to = (int?)r["to"];
                             var url = (string)r["payload"]?["url"];
-                            if (from != null && to != null && !string.IsNullOrEmpty(url))
+                            if (from != null && to != null && !string.IsNullOrEmpty(url)
+                                && from.Value >= 0 && to.Value >= from.Value && to.Value < textLen)
                                 emotes.Add(new EmoteRange { Start = from.Value, End = to.Value, Url = url });
                         }
                     }

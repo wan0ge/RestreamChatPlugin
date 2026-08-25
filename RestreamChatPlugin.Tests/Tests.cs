@@ -609,5 +609,102 @@ namespace RestreamChatPlugin.Tests
             Assert.AreEqual("https://cdn.7tv.app/emote/x/2x.gif",
                 EmoteProvider.SevenTvEmoteUrl("//cdn.7tv.app/emote/x/", "2x.gif"));
         }
+
+        // ===== ParseFrame：表情范围边界（v1.5.2 修复，发现3）=====
+        // 畸形范围（from/to 越界或反向）若不过滤，会在 AppendMessage 的 Substring 触发
+        // ArgumentOutOfRangeException 并被 PushDanmaku 吞掉，导致整条消息丢失；
+        // 正确行为是丢弃该表情范围、保留消息正文。
+
+        [TestMethod]
+        public void ParseFrame_Event_WithReplaces_FromBeyondText_Ignored()
+        {
+            // from 远超文本长度：越界范围应被忽略，消息仍正常解析。
+            var json = "{\"action\":\"event\",\"payload\":{\"eventPayload\":{\"author\":{\"displayName\":\"a\"},\"text\":\"SirPrise\",\"replaces\":[{\"from\":100,\"to\":110,\"payload\":{\"url\":\"https://x/y.gif\"}}]},\"eventSourceId\":2,\"eventTypeId\":4}}";
+            var f = RestreamChatClient.ParseFrame(json);
+            Assert.AreEqual("message", f.Kind);
+            Assert.AreEqual("SirPrise", f.Text);
+            Assert.AreEqual(0, f.Emotes.Count, "越界表情范围应被忽略");
+        }
+
+        [TestMethod]
+        public void ParseFrame_Event_WithReplaces_ToLessThanFrom_Ignored()
+        {
+            // to < from（反向范围）：应被忽略。
+            var json = "{\"action\":\"event\",\"payload\":{\"eventPayload\":{\"author\":{\"displayName\":\"a\"},\"text\":\"SirPrise\",\"replaces\":[{\"from\":5,\"to\":2,\"payload\":{\"url\":\"https://x/y.gif\"}}]},\"eventSourceId\":2,\"eventTypeId\":4}}";
+            var f = RestreamChatClient.ParseFrame(json);
+            Assert.AreEqual("message", f.Kind);
+            Assert.AreEqual(0, f.Emotes.Count, "反向表情范围应被忽略");
+        }
+
+        [TestMethod]
+        public void ParseFrame_Event_WithReplaces_NegativeFrom_Ignored()
+        {
+            // from 为负：应被忽略。
+            var json = "{\"action\":\"event\",\"payload\":{\"eventPayload\":{\"author\":{\"displayName\":\"a\"},\"text\":\"SirPrise\",\"replaces\":[{\"from\":-1,\"to\":3,\"payload\":{\"url\":\"https://x/y.gif\"}}]},\"eventSourceId\":2,\"eventTypeId\":4}}";
+            var f = RestreamChatClient.ParseFrame(json);
+            Assert.AreEqual("message", f.Kind);
+            Assert.AreEqual(0, f.Emotes.Count, "负向表情范围应被忽略");
+        }
+
+        [TestMethod]
+        public void ParseFrame_Event_WithReplaces_MixedValidAndOutOfRange_KeepsValid()
+        {
+            // 一条合法范围 + 一条越界范围：仅保留合法范围，不丢消息。
+            var json = "{\"action\":\"event\",\"payload\":{\"eventPayload\":{\"author\":{\"displayName\":\"a\"},\"text\":\"SirPrise\",\"replaces\":[{\"from\":0,\"to\":7,\"payload\":{\"url\":\"https://static-cdn.jtvnw.net/emoticons/v1/301544926/3.0\"}},{\"from\":100,\"to\":110,\"payload\":{\"url\":\"https://x/y.gif\"}}]},\"eventSourceId\":2,\"eventTypeId\":4}}";
+            var f = RestreamChatClient.ParseFrame(json);
+            Assert.AreEqual("message", f.Kind);
+            Assert.AreEqual(1, f.Emotes.Count, "仅保留合法范围");
+            Assert.AreEqual(0, f.Emotes[0].Start);
+            Assert.AreEqual(7, f.Emotes[0].End);
+        }
+
+        // ===== IsAuthHttpError：token 端点 4xx 识别（v1.5.2 修复，发现2）=====
+        // token 端点以 "HTTP 401 ..." 形式抛出（无括号），旧实现只匹配 (401)/(403)/400 字面量，
+        // 导致 401/403 被误判为瞬断而无效重试；修复后从消息提取状态码，4xx（除 429 限流）即鉴权失败。
+
+        [TestMethod]
+        public void IsAuthHttpError_Http401Message_True()
+        {
+            Assert.IsTrue(RestreamPlugin.IsAuthHttpError(new Exception("HTTP 401 {\"error\":\"invalid_grant\"}")));
+        }
+
+        [TestMethod]
+        public void IsAuthHttpError_Http403Message_True()
+        {
+            Assert.IsTrue(RestreamPlugin.IsAuthHttpError(new Exception("HTTP 403 forbidden")));
+        }
+
+        [TestMethod]
+        public void IsAuthHttpError_Http400Message_True()
+        {
+            Assert.IsTrue(RestreamPlugin.IsAuthHttpError(new Exception("HTTP 400 bad request")));
+        }
+
+        [TestMethod]
+        public void IsAuthHttpError_Http429Message_False()
+        {
+            // 429 限流属瞬时错误，应走重试而非判为鉴权失败。
+            Assert.IsFalse(RestreamPlugin.IsAuthHttpError(new Exception("HTTP 429 too many requests")));
+        }
+
+        [TestMethod]
+        public void IsAuthHttpError_Http5xxMessage_False()
+        {
+            // 5xx 非客户端鉴权错误，不应判为 token 失效。
+            Assert.IsFalse(RestreamPlugin.IsAuthHttpError(new Exception("HTTP 500 internal error")));
+        }
+
+        [TestMethod]
+        public void IsAuthHttpError_TransientNetworkMessage_False()
+        {
+            // 传输层瞬断（非 4xx）不应判为鉴权失败，交由重连循环自动重试。
+            Assert.IsFalse(RestreamPlugin.IsAuthHttpError(new Exception("An error occurred while sending the request.")));
+        }
+
+        [TestMethod]
+        public void IsAuthHttpError_Null_False()
+        {
+            Assert.IsFalse(RestreamPlugin.IsAuthHttpError(null));
+        }
     }
 }

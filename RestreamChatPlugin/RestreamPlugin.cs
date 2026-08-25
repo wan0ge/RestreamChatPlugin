@@ -72,7 +72,7 @@ namespace RestreamChatPlugin
             PluginName = L10n.T("Restream 聚合聊天集成", "Restream アグリゲートチャット統合", "Restream Aggregated Chat Integration");
             PluginAuth = "Elegy233";
             PluginCont = "HXDD233@qq.com";
-            PluginVer = "v1.5.1";
+            PluginVer = "v1.5.2";
             PluginDesc = L10n.T(
                 "通过 Restream Chat API 把多平台的聊天集成至弹幕姬（无需连接 B 站）",
                 "Restream Chat API で複数プラットフォームのチャットを弾幕姫に統合（B 站接続不要）",
@@ -283,7 +283,19 @@ namespace RestreamChatPlugin
 
                     Log("等待浏览器授权回调（请在浏览器完成登录与同意）...");
                     Trace("已发送授权请求，等待浏览器回调");
-                    var ctx = await _listener.GetContextAsync();
+                    // 等待回调设上限：用户放弃授权（关闭页面/未同意）时，GetContextAsync 会无限阻塞，
+                    // 既泄漏后台线程也长期占用回调端口，直到插件停用才释放。超时即主动撤销并提示重试。
+                    var ctxTask = _listener.GetContextAsync();
+                    var timeout = Task.Delay(TimeSpan.FromMinutes(5));
+                    var completed = await Task.WhenAny(ctxTask, timeout);
+                    if (completed != ctxTask)
+                    {
+                        Log("等待授权回调超时（5 分钟未收到浏览器回调），已取消本次登录，可重新点击「登录并授权」。");
+                        Trace("登录流程超时（未收到回调）");
+                        AuthorizationCompleted?.Invoke("等待授权回调超时，请重新点击「登录并授权」。");
+                        return;
+                    }
+                    var ctx = await ctxTask;
                     Trace("已收到浏览器授权回调");
                     var code = ctx.Request.QueryString["code"];
 
@@ -448,13 +460,23 @@ namespace RestreamChatPlugin
         }
 
         // 判断异常是否为服务器明确拒绝（4xx）。此类错误表示 refresh token 已失效，重试无效。
-        private static bool IsAuthHttpError(Exception ex)
+        // token 端点以 "HTTP 401 ..." 形式抛出（无括号），故从消息中提取状态码，
+        // 避免依赖具体括号格式；429 限流属瞬时错误，应走重试而非判为鉴权失败。
+        internal static bool IsAuthHttpError(Exception ex)
         {
             var msg = ex?.Message ?? "";
-            if (msg.Contains("(401)") || msg.Contains("(403)") || msg.Contains("400")) return true;
+            var m = System.Text.RegularExpressions.Regex.Match(msg, @"\bHTTP\s+(\d{3})\b");
+            if (m.Success)
+            {
+                var code = int.Parse(m.Groups[1].Value);
+                return code >= 400 && code < 500 && code != 429;
+            }
             var we = ex?.InnerException as WebException ?? ex as WebException;
             if (we?.Response is HttpWebResponse resp)
-                return (int)resp.StatusCode >= 400 && (int)resp.StatusCode < 500;
+            {
+                var code = (int)resp.StatusCode;
+                return code >= 400 && code < 500 && code != 429;
+            }
             return false;
         }
 
@@ -622,6 +644,10 @@ namespace RestreamChatPlugin
             {
                 try
                 {
+                    // 进入重连即认定当前连接已失效：服务器优雅 Close 帧只置 unexpected 标记、
+                    // 不触发 OnStatus，_connected 仍可能为上次成功连接遗留的 true，若不在此清零，
+                    // 下方循环会误判“连接已恢复”而直接退出，导致 WS 已死却永不重连。
+                    _connected = false;
                     // 鉴权失败（token 已彻底失效）不需要重试连接，直接提示重新授权。
                     if (_authFailed)
                     {
