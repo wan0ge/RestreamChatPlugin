@@ -19,30 +19,31 @@
 
 ## 下载
 
-- GitHub Releases：`RestreamChatPlugin.zip`（内含单文件 `RestreamChatPlugin.dll`）
+- GitHub Releases：`RestreamChatPlugin.dll`（单文件，已内嵌 Newtonsoft.Json）
 - 弹幕姬官网插件页
 
 ## 安装
 
-1. 下载并解压 `RestreamChatPlugin.zip`。
-2. 把 `RestreamChatPlugin.dll` 放入 `我的文档\弹幕姬\Plugins\RestreamChatPlugin\` 文件夹（若 `RestreamChatPlugin` 文件夹不存在则新建）。
-3. 重启弹幕姬。
+1. 下载 `RestreamChatPlugin.dll`。
+2. 把 `RestreamChatPlugin.dll` 直接放入 `我的文档\弹幕姬\Plugins\` 目录（弹幕姬根插件目录，**不要**放进子文件夹——弹幕姬只扫描 Plugins 根目录下的 DLL，不会递归子文件夹）。
+3. 重启弹幕姬。插件首次运行会自动在 `Plugins\RestreamChatPlugin\` 下创建数据目录（存放配置文件与表情包缓存），无需手动创建。
 
 ## 使用方法
 
-1. 在弹幕姬「插件」选项卡中找到 **Restream 聚合聊天**，右键选择「管理」打开设置窗口。
-2. 点击「授权」，在浏览器中登录 Restream 并允许 Chat API 访问；授权完成会自动回到弹幕姬。
-3. 按需选择代理模式（默认为系统代理；网络正常可选直连，或填写自定义代理地址）。
-4. 点击「保存并连接」，或回到弹幕姬右键本插件选择「启用」，即可开始接收多平台聊天。
+1. 准备 Restream 应用：在 [Restream 开发者后台](https://developers.restream.io/apps) 创建应用，记下 Client ID 与 Client Secret，并把回调地址（Redirect URI）设为 `http://localhost:8989/callback`。
+2. 在弹幕姬「插件」选项卡中找到 **Restream 聚合聊天**，右键选择「管理」打开设置窗口，在第①步填入上面的 Client ID 与 Client Secret。
+3. 点击「授权」完成 Restream 登录与 Chat API 授权，回调到本机后自动回到弹幕姬。
+4. 按需选择代理模式（默认系统代理；网络正常可选直连或填写自定义代理地址）。
+5. 点击「保存并连接」，或回到弹幕姬右键本插件选择「启用」，即可开始接收多平台聊天。
 
 > 若开启「独立浮层」，聊天会以图片表情形式渲染在独立浮层中；关闭时使用弹幕姬自带浮层显示。
 
 ## 构建
 
-本插件为弹幕姬（bililive_dm）的插件，依赖其 `BilibiliDM_PluginFramework` 框架。
+本插件为弹幕姬（bililive_dm）的插件，依赖其 `BilibiliDM_PluginFramework` 框架，无法脱离框架独立编译。
 
-- **方式一（Visual Studio）**：已安装 Visual Studio 2022 且勾选「.NET 桌面开发」工作负载时，直接运行仓库根目录下的 `build.bat`，它将调用 VS 自带的 MSBuild 编译出 `RestreamChatPlugin.dll`。
-- **方式二（命令行）**：在已存在预编译 `BilibiliDM_PluginFramework.dll` 的环境中执行
+- **Visual Studio**：在 `BilibiliDM_PluginFramework` 框架工程可用的环境下（例如克隆 bililive_dm 主仓库），用 Visual Studio 打开 `RestreamChatPlugin\RestreamChatPlugin.csproj`（或主仓库的 `Bililive_dm.sln`），构建 `RestreamChatPlugin` 工程即可。也可直接运行 `RestreamChatPlugin\build.bat`（需已安装 VS 且勾选「.NET 桌面开发」），它会调用 VS 自带的 MSBuild 编译出 `RestreamChatPlugin.dll`。
+- **命令行**：在已存在预编译 `BilibiliDM_PluginFramework.dll` 的环境中执行
   ```
   dotnet build RestreamChatPlugin.csproj /p:Configuration=Debug /p:Platform=AnyCPU /p:BuildProjectReferences=false
   ```
