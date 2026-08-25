@@ -1,0 +1,12 @@
+# .NET / MSBuild 构建产物
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+
+# VS Code 测试资源管理器配置（仅本地开发用）
+testEnvironments.json
+
+# 预编译发行包由 GitHub Releases / 弹幕姬官网分发，不纳入源码仓库
+dist/
