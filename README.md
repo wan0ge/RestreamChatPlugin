@@ -24,9 +24,7 @@
 
 ## 安装
 
-1. 下载 `RestreamChatPlugin.dll`。
-2. 把 `RestreamChatPlugin.dll` 直接放入 `我的文档\弹幕姬\Plugins\` 目录（弹幕姬根插件目录，**不要**放进子文件夹——弹幕姬只扫描 Plugins 根目录下的 DLL，不会递归子文件夹）。
-3. 重启弹幕姬。插件首次运行会自动在 `Plugins\RestreamChatPlugin\` 下创建数据目录（存放配置文件与表情包缓存），无需手动创建。
+下载 `RestreamChatPlugin.dll`，放入 `我的文档\弹幕姬\plugins\`，重启弹幕姬即可。插件首次运行会在 `Plugins\RestreamChatPlugin\` 下自动创建数据目录，用于存放配置文件与表情包缓存。
 
 ## 使用方法
 
