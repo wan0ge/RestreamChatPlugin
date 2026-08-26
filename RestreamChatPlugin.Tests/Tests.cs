@@ -4,13 +4,16 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace RestreamChatPlugin.Tests
 {
     // 覆盖解析（ParseFrame）、弹幕命名（BuildDanmakuName）、配置根目录（Config.PluginRoot）、
-    // 内嵌资源（Newtonsoft.Json）的常规与边缘情况。
-    // 说明：ParseFrame 内部使用 Newtonsoft.Json，运行时会触发插件自带的 AssemblyResolve 从内嵌资源加载，
-    // 因此这些测试同时验证了“单文件嵌入”是否真正生效（若嵌入失败，JObject.Parse 会抛 FileNotFoundException）。
+    // Newtonsoft.Json 运行时可用性与非内嵌约定的常规与边缘情况。
+    // 说明：ParseFrame 内部使用 Newtonsoft.Json 做 JSON 解析；按弹幕姬 SDK 约定，
+    // 插件不内嵌、不复制 Newtonsoft.Json.dll（错误放置反而可能导致弹幕姬崩溃，见 SDK README），
+    // 故这些测试验证的是“运行时可用 Newtonsoft”的约定（JObject.Parse 能成功即说明解析可用）。
     [TestClass]
     public class PluginTests
     {
@@ -218,14 +221,30 @@ namespace RestreamChatPlugin.Tests
                 "单文件部署时数据目录应为 DLL 同级的“<DLL名>”子目录");
         }
 
-        // ===== 内嵌资源：Newtonsoft.Json 已打进 DLL（单文件部署） =====
+        // ===== Newtonsoft.Json：按 SDK 约定不内嵌、不复制（见 SDK README） =====
 
         [TestMethod]
-        public void EmbeddedResource_NewtonsoftJson_Present()
+        public void NewtonsoftJson_NotEmbeddedAsResource()
         {
             var names = typeof(RestreamChatClient).Assembly.GetManifestResourceNames();
-            Assert.IsTrue(names.Contains("Newtonsoft.Json.dll"),
-                "Newtonsoft.Json.dll 应作为内嵌资源存在，使产物为单文件 DLL。实际资源：" + string.Join(", ", names));
+            Assert.IsFalse(names.Contains("Newtonsoft.Json.dll"),
+                "Newtonsoft.Json.dll 不应作为内嵌资源存在；按弹幕姬 SDK 约定插件不内嵌也不复制该 DLL，错误放置反而可能导致弹幕姬崩溃。实际资源：" + string.Join(", ", names));
+        }
+
+        // 验证 Newtonsoft.Json 在运行时可被解析（插件仅保留编译期引用、不内嵌也不复制），
+        // 测试宿主同样提供该 DLL，故此处直接做序列化往返验证。
+        [TestMethod]
+        public void NewtonsoftJson_ResolvableAtRuntime()
+        {
+            var cfg = new PluginConfig { ClientId = "cid", AccessToken = "tok" };
+            var json = JsonConvert.SerializeObject(cfg);
+            var back = JsonConvert.DeserializeObject<PluginConfig>(json);
+            Assert.IsNotNull(back, "Newtonsoft.Json 应能完成反序列化");
+            Assert.AreEqual("cid", back.ClientId, "反序列化后字段应保持一致");
+            Assert.AreEqual("tok", back.AccessToken);
+            // 同时验证 JObject 解析可用（ParseFrame 内部依赖）。
+            var jo = JObject.Parse("{\"a\":1}");
+            Assert.AreEqual(1L, (long)jo["a"], "JObject 解析应可用");
         }
 
         // ===== emoji -> Twemoji 码点映射（把 emoji 渲染成高清图片，规避字体降级为单色） =====
@@ -378,6 +397,30 @@ namespace RestreamChatPlugin.Tests
         {
             // URL 无扩展名（如 BTTV 的 /emote/xxx/1x）时默认按 PNG 落盘，WPF 仍按内容解码。
             Assert.IsTrue(RestreamOverlayWindow.EmoteCacheFile("https://cdn.betterttv.net/emote/abc/1x").EndsWith(".png"));
+        }
+
+        // ===== 未缓存表情的渲染判定：以可视化树成员关系为准（首条未缓存也不空白） =====
+
+        [TestMethod]
+        public void IsInVisualTree_FalseWhenDetached()
+        {
+            // 元素尚未挂入任何容器时视为不在树上，下载完成不应渲染（消息已消失）。
+            var img = new System.Windows.Controls.Image();
+            Assert.IsFalse(RestreamOverlayWindow.IsInVisualTree(img), "游离元素不应被判为在树上");
+        }
+
+        [TestMethod]
+        public void IsInVisualTree_TrueWhenAddedToContainerBeforeLoaded()
+        {
+            // 关键回归：元素刚被加入容器、Loaded 事件尚未触发时，父节点已建立，
+            // 此时应判定为「在树上」，保证首条未缓存表情在下载完成后能渲染（不会空白）。
+            // 仅依赖 Image.IsLoaded 会在该窗口内误判为「未加载」而永不渲染。
+            var img = new System.Windows.Controls.Image();
+            var panel = new System.Windows.Controls.StackPanel();
+            panel.Children.Add(img);
+            Assert.IsTrue(RestreamOverlayWindow.IsInVisualTree(img), "加入容器即应判为在树上，与 IsLoaded 无关");
+            // 加入容器后即使尚未 Loaded，父节点已非空，判定与 IsLoaded 行为解耦，确保首帧渲染路径不被误杀。
+            Assert.IsFalse(img.IsLoaded, "前置：此时 IsLoaded 尚为假，证明判定不依赖它");
         }
 
         // ===== ExtractAuthCode：从用户粘贴内容中提取授权码（覆盖完整回调整址 / 独立片段 / 直接 code / 截断边界） =====

@@ -429,13 +429,15 @@ namespace RestreamChatPlugin
                 {
                     var path = t.Status == TaskStatus.RanToCompletion ? t.Result : null;
                     if (path == null) _emoteDownloads.TryRemove(cacheFile, out _);
-                    // 仅当表情图片仍在可视化树中才渲染：若消息已消失（被移除出树），不再设置源，
+                    // 仅当表情图片仍挂在消息的可视化树上才渲染：消息被移除出树（如已淡出/飞出）后不再设置源，
                     // 避免对其启动 GIF 动画定时器却永远等不到 Unloaded 而泄漏 GDI+ 资源与定时器。
-                    if (img.IsLoaded)
+                    // 用父节点判定而不用 Image.IsLoaded：后者在 Loaded 事件触发后才置真，而图片加入树到 Loaded
+                    // 之间有时间差，若下载在此窗口内完成会误判为「未加载」从而永不渲染（首条未缓存表情空白）。
+                    img.Dispatcher.Invoke(() =>
                     {
-                        try { img.Dispatcher.Invoke(() => TrySetEmoteImage(img, path, span, fallbackText)); }
-                        catch { }
-                    }
+                        if (IsInVisualTree(img))
+                            TrySetEmoteImage(img, path, span, fallbackText);
+                    });
                 });
             }
             return span;
@@ -457,7 +459,6 @@ namespace RestreamChatPlugin
                 // 仅 emotesv2_ 前缀的现代表情具备 v2 动画资源；其余（如旧版数字 id）无 v2 资源，
                 // 改写后必 404，直接保持原 v1 静态地址（由上层回退），避免无谓的网络请求。
                 if (!id.StartsWith("emotesv2_", StringComparison.OrdinalIgnoreCase)) return null;
-                RestreamPlugin.Trace("Twitch 原生动画表情改写：" + url + " -> v2/animated");
                 return "https://static-cdn.jtvnw.net/emoticons/v2/" + id + "/animated/dark/3.0";
             }
             catch { return null; }
@@ -481,12 +482,19 @@ namespace RestreamChatPlugin
         // 落盘后返回本地路径，全部失败返回 null。并发的同名请求共享同一任务，避免重复下载。
         private static Task<string> EnsureEmoteCachedAsync(string cacheFile, string effectiveUrl, string fallbackUrl)
         {
-            return _emoteDownloads.GetOrAdd(cacheFile, key => Task.Run(async () =>
+            return _emoteDownloads.GetOrAdd(cacheFile, key =>
             {
-                var path = await DownloadEmoteToFile(effectiveUrl, cacheFile);
-                if (path == null && fallbackUrl != null) path = await DownloadEmoteToFile(fallbackUrl, cacheFile);
-                return path;
-            }));
+                // 仅在此处（真正首次发起下载）记录日志，与网络请求一一对应：
+                // 同一消息多处出现同一 URL、或后续消息已命中本地缓存，都不会重复打印，
+                // 避免把「每处 emote 位置都改写一次地址」误读为「重复发起了多次请求」。
+                RestreamPlugin.Trace("发起表情包下载：" + effectiveUrl + (fallbackUrl != null ? "（回退 " + fallbackUrl + "）" : ""));
+                return Task.Run(async () =>
+                {
+                    var path = await DownloadEmoteToFile(effectiveUrl, cacheFile);
+                    if (path == null && fallbackUrl != null) path = await DownloadEmoteToFile(fallbackUrl, cacheFile);
+                    return path;
+                });
+            });
         }
 
         // 将单个表情地址下载并落盘到本地缓存：成功返回本地路径，失败（网络/404/非图片）返回 null。
@@ -543,6 +551,12 @@ namespace RestreamChatPlugin
 
         // 表情包本地缓存目录：与 emoji 同源思路，按 URL 哈希落盘，离线可复用。
         private static string EmoteCacheDir => Path.Combine(Config.PluginRoot, "emotes");
+
+        // 元素是否仍挂在可视化树上：以父节点存在为准，而非 Image.IsLoaded。
+        // IsLoaded 在 Loaded 事件触发后才置真，而图片加入树到 Loaded 之间有时间差，
+        // 异步下载若在此窗口内完成会误判为「未加载」而永不渲染（首条未缓存表情空白）。
+        // 父节点在元素被加入容器时即建立，能正确反映「是否仍在消息中」。
+        internal static bool IsInVisualTree(UIElement e) => VisualTreeHelper.GetParent(e) != null;
 
         // 进行中的下载任务：相同键（emoji 码点 / 表情包 URL 哈希）并发请求只下载一次，
         // 避免重复拉取与文件争用。
@@ -720,6 +734,14 @@ namespace RestreamChatPlugin
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(delays[0]) };
             timer.Tick += (s, e) =>
             {
+                // 消息已从可视化树移除（通常因 Unloaded 尚未触发而先被父容器摘除）时立即停止，
+                // 避免 GIF 定时器与 GDI+ 资源空转泄漏。
+                if (!IsInVisualTree(img))
+                {
+                    timer.Stop();
+                    try { gdi.Dispose(); } catch { }
+                    return;
+                }
                 try
                 {
                     idx = (idx + 1) % frameCount;

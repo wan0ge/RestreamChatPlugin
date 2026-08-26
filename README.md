@@ -10,7 +10,7 @@
 - **表情渲染**：可选「独立浮层」，把 Twitch / Kappa 等第三方表情包渲染成图片；默认关闭，使用弹幕姬自带浮层。
 - **本地化**：界面跟随弹幕姬的语言设置（中文 / 日本語 / English）。
 - **启用记忆**：弹幕姬不持久化插件的启用/停用状态，开启「自动启用」后会在弹幕姬启动时自动恢复启用。
-- **单文件部署**：产物 `RestreamChatPlugin.dll` 已内嵌 Newtonsoft.Json，无需额外依赖文件。
+- **单文件部署**：产物为单个 `RestreamChatPlugin.dll`，无需额外依赖文件。
 
 ## 环境要求
 
@@ -19,7 +19,7 @@
 
 ## 下载
 
-- [GitHub Releases](https://github.com/wan0ge/RestreamChatPlugin/releases)：`RestreamChatPlugin.dll`（单文件，已内嵌 Newtonsoft.Json）
+- [GitHub Releases](https://github.com/wan0ge/RestreamChatPlugin/releases)：`RestreamChatPlugin.dll`（单个 DLL，无需额外依赖文件）
 - [弹幕姬官网插件页](https://www.danmuji.org/plugins/)
 
 ## 安装
@@ -85,7 +85,7 @@ Restream Chat 会把你账号下所有已连接平台的聊天聚合成一条实
   ```
   dotnet build RestreamChatPlugin.csproj /p:Configuration=Debug /p:Platform=AnyCPU /p:BuildProjectReferences=false
   ```
-  产物位于 `RestreamChatPlugin\bin\Debug\RestreamChatPlugin.dll`，为单文件（Newtonsoft.Json 已内嵌）。
+  产物位于 `RestreamChatPlugin\bin\Debug\RestreamChatPlugin.dll`，为单个 DLL 文件（无需额外依赖文件）。
 
 ## 测试
 
@@ -96,7 +96,7 @@ Restream Chat 会把你账号下所有已连接平台的聊天聚合成一条实
 
 ```
 RestreamChatPlugin-oss/
-├── RestreamChatPlugin/              插件主工程（legacy csproj，产物为单文件 DLL，内嵌 Newtonsoft.Json）
+├── RestreamChatPlugin/              插件主工程（legacy csproj，产物为单个 DLL）
 │   ├── RestreamPlugin.cs            插件入口（DMPlugin 实现）：生命周期、授权流程编排、WebSocket 连接与重连、独立浮层开关、本地化、版本号 PluginVer
 │   ├── RestreamChatClient.cs        Restream Chat API 客户端：WebSocket 连接、消息帧解析（ParseFrame）、事件/聊天/订阅类型、代理模式接入
 │   ├── RestreamOverlayWindow.cs     独立浮层窗口（WPF，纯代码构建）：透明/置顶/鼠标穿透；滚动与侧边栏布局；emoji 与第三方表情图片渲染；GIF 动画；置顶保活
@@ -109,16 +109,16 @@ RestreamChatPlugin-oss/
 │   ├── Properties/
 │   │   └── AssemblyInfo.cs         程序集元信息（版本号 AssemblyVersion / AssemblyFileVersion）
 │   └── Libs/
-│       └── Newtonsoft.Json.dll     内嵌资源，随产物打进 DLL，运行时由 AssemblyResolve 加载
+│       └── Newtonsoft.Json.dll     编译期引用（Private=False，不复制到输出）
 ├── RestreamChatPlugin.Tests/       MSTest 单元测试
-│   ├── Tests.cs                     覆盖 ParseFrame、BuildDanmakuName、Config.PluginRoot、内嵌资源、emoji 码点/分段/缓存、表情包缓存、ExtractAuthCode、代理模式、EmoteProvider URL 拼装等常规与边缘情况
+│   ├── Tests.cs                     覆盖 ParseFrame、BuildDanmakuName、Config.PluginRoot、Newtonsoft.Json 编译期引用约定、emoji 码点/分段/缓存、表情包缓存、ExtractAuthCode、代理模式、EmoteProvider URL 拼装等常规与边缘情况
 │   ├── Tests_EmoteAndGif.cs         覆盖动态表情修复相关纯逻辑：TwitchAnimatedEmoteUrl（v1→v2 改写，含旧版数字 id/非 Twitch/BTTV/7TV/非法 URL 等分支）、ToLocalPath（file:// 归一）、IsExpired（5 分钟续期缓冲边界）、IsGifFile（GIF 魔数判定，含 PNG/不存在文件）
 │   └── RestreamChatPlugin.Tests.csproj  测试工程文件
 ├── RestreamChatPlugin.Tests.Runner/  反射式测试运行器（无 VSTest testhost 环境下直接加载测试程序集逐个执行）
 │   ├── Program.cs                   运行器入口
 │   └── Runner.csproj                运行器工程文件
 ├── dist/
-│   └── RestreamChatPlugin.dll      构建产物（单文件，已内嵌 Newtonsoft.Json），即发版用 DLL
+│   └── RestreamChatPlugin.dll      构建产物（单个 DLL），即发版用 DLL
 ├── docs/
 │   ├── preview.png                 消息效果预览图
 │   └── preview2.png                设置窗口预览图

@@ -27,5 +27,5 @@ if errorlevel 1 (
 
 echo.
 echo 生成成功！DLL 位于 bin\Debug\RestreamChatPlugin.dll
-echo 把生成的 RestreamChatPlugin.dll（单文件，已内嵌 Newtonsoft.Json）复制到弹幕姬的 Plugins 文件夹即可。
+echo 把生成的 RestreamChatPlugin.dll 复制到弹幕姬的 Plugins 文件夹即可。
 pause

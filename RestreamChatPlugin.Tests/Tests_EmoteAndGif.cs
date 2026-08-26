@@ -171,5 +171,39 @@ namespace RestreamChatPlugin.Tests
             // 边缘：文件不存在不抛异常，返回 false（上层回退静态 BitmapImage 或文字）。
             Assert.IsFalse(RestreamOverlayWindow.IsGifFile(Path.Combine(Path.GetTempPath(), "does_not_exist_" + Guid.NewGuid().ToString("N") + ".gif")));
         }
+
+        // ===== EmoteCacheFile：去重键（同名请求能否复用同一下载任务取决于此） =====
+
+        [TestMethod]
+        public void EmoteCacheFile_SameUrl_SameKey()
+        {
+            // 去重键：相同有效地址必须映射到同一缓存文件名，否则同一表情的并发/重复请求
+            // 无法被 _emoteDownloads（GetOrAdd）合并为一次下载，造成「重复请求」。
+            var url = "https://static-cdn.jtvnw.net/emoticons/v2/emotesv2_5d523adb8bbb4786821cd7091e47da21/animated/dark/3.0";
+            Assert.AreEqual(RestreamOverlayWindow.EmoteCacheFile(url), RestreamOverlayWindow.EmoteCacheFile(url),
+                "同一有效地址须映射到同一缓存键，确保去重生效");
+        }
+
+        [TestMethod]
+        public void EmoteCacheFile_DifferentUrl_DifferentKey()
+        {
+            // 去重键：不同地址应映射到不同缓存文件，避免互相覆盖导致张冠李戴。
+            var a = "https://cdn.betterttv.net/emote/566ca38765dbbdab32ec0560/1x";
+            var b = "https://cdn.betterttv.net/emote/6015985deadbeef/1x";
+            Assert.AreNotEqual(RestreamOverlayWindow.EmoteCacheFile(a), RestreamOverlayWindow.EmoteCacheFile(b),
+                "不同地址须映射到不同缓存键，避免缓存互相覆盖");
+        }
+
+        [TestMethod]
+        public void EmoteCacheFile_TwitchV1RewrittenToV2_StableKey()
+        {
+            // 去重键随有效地址（v2）而非原始地址（v1）计算：连续两次发送同一 Twitch 原生动画表情，
+            // 改写后有效地址一致，缓存键一致，从而命中同一份已下载文件、不重复请求。
+            var v1 = "https://static-cdn.jtvnw.net/emoticons/v1/emotesv2_587405136a8147148c77df74baaa1bf4/3.0";
+            var v2 = RestreamOverlayWindow.TwitchAnimatedEmoteUrl(v1);
+            Assert.IsNotNull(v2);
+            Assert.AreEqual(RestreamOverlayWindow.EmoteCacheFile(v2), RestreamOverlayWindow.EmoteCacheFile(v2),
+                "改写后的有效地址作为缓存键，保证同表情跨消息复用、不重复下载");
+        }
     }
 }

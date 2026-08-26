@@ -62,16 +62,13 @@
     </ProjectReference>
   </ItemGroup>
   <ItemGroup>
-    <!-- Newtonsoft.Json 以本地引用方式参与编译，但不复制到输出（Private=False）；
-         同时作为内嵌资源打进本 DLL，运行时由 AssemblyResolve 从资源加载，
-         使产物为单文件 RestreamChatPlugin.dll（与点歌姬 DGJv3 单文件部署一致）。 -->
+    <!-- Newtonsoft.Json 以本地引用方式参与编译，但不复制到输出（Private=False）：
+         按弹幕姬 SDK 约定，插件不内嵌、不复制 Newtonsoft.Json.dll（错误放置反而可能导致弹幕姬崩溃，见 SDK README），
+         故此处仅保留编译期引用。 -->
     <Reference Include="Newtonsoft.Json">
       <HintPath>Libs\Newtonsoft.Json.dll</HintPath>
       <Private>False</Private>
     </Reference>
-    <EmbeddedResource Include="Libs\Newtonsoft.Json.dll">
-      <LogicalName>Newtonsoft.Json.dll</LogicalName>
-    </EmbeddedResource>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets"/>
 </Project>

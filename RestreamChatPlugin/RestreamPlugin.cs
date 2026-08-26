@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
-using System.Reflection;
 using System.Threading.Tasks;
 using BilibiliDM_PluginFramework;
 
@@ -14,33 +13,6 @@ namespace RestreamChatPlugin
         // 用本地 HTTP 监听器自动接收授权回调，用户无需手动复制 code。
         internal const string RedirectUri = "http://localhost:8989/callback";
         internal const int CallbackPort = 8989;
-
-        // Newtonsoft.Json 已作为内嵌资源打进本 DLL；运行时若 CLR 解析不到该程序集，
-        // 从此资源以字节流加载。静态构造在类型首次访问（插件被实例化）时执行，
-        // 早于任何 JsonConvert 调用，保证续期/配置读写前解析器已就绪。
-        private static readonly Dictionary<string, Assembly> _embeddedAssemblies = new Dictionary<string, Assembly>();
-        static RestreamPlugin()
-        {
-            AppDomain.CurrentDomain.AssemblyResolve += (sender, e) =>
-            {
-                if (string.IsNullOrEmpty(e.Name)) return null;
-                var name = new AssemblyName(e.Name).Name;
-                if (name != "Newtonsoft.Json") return null;
-                lock (_embeddedAssemblies)
-                {
-                    if (_embeddedAssemblies.TryGetValue(name, out var cached)) return cached;
-                    using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Newtonsoft.Json.dll"))
-                    {
-                        if (stream == null) return null;
-                        var bytes = new byte[stream.Length];
-                        stream.Read(bytes, 0, bytes.Length);
-                        var asm = Assembly.Load(bytes);
-                        _embeddedAssemblies[name] = asm;
-                        return asm;
-                    }
-                }
-            };
-        }
 
         private RestreamChatClient _client;
         private AdminWindow _admin;
@@ -74,7 +46,7 @@ namespace RestreamChatPlugin
             PluginName = L10n.T("Restream 聚合聊天集成", "Restream アグリゲートチャット統合", "Restream Aggregated Chat Integration");
             PluginAuth = "Elegy233";
             PluginCont = "HXDD233@qq.com";
-            PluginVer = "v1.5.3";
+            PluginVer = "v1.6.0";
             PluginDesc = L10n.T(
                 "通过 Restream Chat API 把多平台的聊天集成至弹幕姬（无需连接 B 站）",
                 "Restream Chat API で複数プラットフォームのチャットを弾幕姫に統合（B 站接続不要）",
