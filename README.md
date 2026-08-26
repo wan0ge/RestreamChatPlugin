@@ -89,7 +89,7 @@ Restream Chat 会把你账号下所有已连接平台的聊天聚合成一条实
 
 ## 测试
 
-- `RestreamChatPlugin.Tests`：基于 MSTest 的单元测试，覆盖代理地址解析、OAuth 续期、本地化等逻辑。
+- `RestreamChatPlugin.Tests`：基于 MSTest 的单元测试，覆盖消息帧解析（ParseFrame）、弹幕命名（BuildDanmakuName）、配置目录与代理模式（含旧字段迁移）、token 过期与鉴权失败判定、授权码提取（ExtractAuthCode）、第三方表情地址拼装（BTTV/7TV）、emoji 码点与分段、表情包缓存键、动态表情地址改写（Twitch v1→v2）与 GIF 魔数识别等逻辑。
 - `RestreamChatPlugin.Tests.Runner`：轻量反射运行器，在无法使用 VSTest testhost 的环境下直接加载测试程序集并逐个执行 `[TestMethod]`，便于在仅具备 .NET Framework 4.8 运行时的机器上查看真实结果。
 
 ## 目录结构
@@ -105,7 +105,7 @@ RestreamChatPlugin-oss/
 │   ├── Config.cs                    配置读写与目录解析（PluginRoot）、代理模式解析与旧字段迁移、HttpClient/WebSocket 代理应用
 │   ├── L10n.cs                      本地化辅助：按进程 CultureInfo 选 中/日/英
 │   ├── build.bat                   调用 VS 自带 MSBuild 编译本工程
-│   ├── RestreamChatPlugin.csproj    工程文件（legacy csproj + PackageReference）
+│   ├── RestreamChatPlugin.csproj    工程文件（legacy csproj，直接程序集引用，无 NuGet 包引用）
 │   ├── Properties/
 │   │   └── AssemblyInfo.cs         程序集元信息（版本号 AssemblyVersion / AssemblyFileVersion）
 │   └── Libs/
